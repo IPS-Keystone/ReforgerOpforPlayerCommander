@@ -1,0 +1,22 @@
+GameProject {
+ ID "PlayerOpforCommander"
+ GUID "6A0AD81F1D44813C"
+ TITLE "PlayerOpforCommander"
+ Dependencies {
+  "58D0FB3206B6F859" "5964E0B3BB7410CE"
+ }
+ Configurations {
+  GameProjectConfig PC {
+  }
+  GameProjectConfig XBOX_ONE {
+  }
+  GameProjectConfig XBOX_SERIES {
+  }
+  GameProjectConfig PS4 {
+  }
+  GameProjectConfig PS5 {
+  }
+  GameProjectConfig HEADLESS {
+  }
+ }
+}
