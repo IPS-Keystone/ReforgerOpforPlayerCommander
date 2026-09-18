@@ -4,7 +4,7 @@
 modded class SCR_BaseGameMode : BaseGameMode
 {
 	[Attribute(defvalue: "US", desc: "Fallback key of the faction to HIDE from the commander (the players' side) when the commander requests none. Normally the toolbar picks a playable faction.", category: "OPC Fog of War")]
-	protected string m_sOPC_SpotterFactionKey;
+	protected string m_sOPC_HiddenFactionKey;
 
 	[Attribute(defvalue: "30", desc: "Seconds a spotted enemy stays revealed after the last AI contact.", category: "OPC Fog of War", params: "1 600 1")]
 	protected float m_fOPC_RevealTimeout;
@@ -28,7 +28,7 @@ modded class SCR_BaseGameMode : BaseGameMode
 		{
 			m_OPC_FogOfWar = new OPC_FogOfWarServer();
 
-			string factionKey = m_sOPC_SpotterFactionKey;
+			string factionKey = m_sOPC_HiddenFactionKey;
 			float timeout = m_fOPC_RevealTimeout;
 			float interval = m_fOPC_UpdateInterval;
 			bool playersCanSpot = m_bOPC_PlayersCanSpot;
@@ -37,8 +37,8 @@ modded class SCR_BaseGameMode : BaseGameMode
 			SCR_MissionHeader header = SCR_MissionHeader.Cast(GetGame().GetMissionHeader());
 			if (header)
 			{
-				if (!header.m_sOPC_SpotterFactionKey.IsEmpty())
-					factionKey = header.m_sOPC_SpotterFactionKey;
+				if (!header.m_sOPC_HiddenFactionKey.IsEmpty())
+					factionKey = header.m_sOPC_HiddenFactionKey;
 
 				if (header.m_fOPC_RevealTimeout > 0)
 					timeout = header.m_fOPC_RevealTimeout;

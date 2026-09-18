@@ -242,7 +242,7 @@ class OPC_FogOfWarClient
 	//! Called from SCR_PlayerController every time the server sends the current spotted list
 	void OnRevealedReceived(notnull array<RplId> revealedIds)
 	{
-		m_RevealedEntities.Clear();
+		set<IEntity> revealed = new set<IEntity>();
 		foreach (RplId id : revealedIds)
 		{
 			IEntity entity = IEntity.Cast(Replication.FindItem(id));
@@ -255,10 +255,27 @@ class OPC_FogOfWarClient
 			}
 
 			if (entity)
-				m_RevealedEntities.Insert(entity);
+				revealed.Insert(entity);
 		}
 
-		Refresh();
+		// Skip the (potentially expensive) refresh when nothing changed
+		bool changed = revealed.Count() != m_RevealedEntities.Count();
+		if (!changed)
+		{
+			foreach (IEntity entity : revealed)
+			{
+				if (m_RevealedEntities.Find(entity) == -1)
+				{
+					changed = true;
+					break;
+				}
+			}
+		}
+
+		m_RevealedEntities = revealed;
+
+		if (changed && m_bApplied)
+			Refresh();
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -626,6 +643,14 @@ class OPC_FogOfWarClient
 	{
 		m_bEditorOpen = false;
 		UpdateApplied();
+
+		// Pause the server-side polling while the editor is closed; OnEditorOpened resubscribes
+		if (m_bEnabled)
+		{
+			SCR_PlayerController pc = SCR_PlayerController.Cast(GetGame().GetPlayerController());
+			if (pc)
+				pc.OPC_RequestSubscribe(false, string.Empty);
+		}
 	}
 
 	//------------------------------------------------------------------------------------------------
