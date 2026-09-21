@@ -54,12 +54,12 @@ modded class SCR_PlayerController : PlayerController
 	// SERVER -> OWNER
 	//------------------------------------------------------------------------------------------------
 	//! Server: send effective config to the owning client
-	void OPC_SendConfig(string factionKey, float revealTimeout)
+	void OPC_SendConfig(string factionKey, float revealTimeout, float contactReportCooldown)
 	{
 		if (OPC_IsLocalOwner())
-			OPC_RpcDo_Config(factionKey, revealTimeout);
+			OPC_RpcDo_Config(factionKey, revealTimeout, contactReportCooldown);
 		else
-			Rpc(OPC_RpcDo_Config, factionKey, revealTimeout);
+			Rpc(OPC_RpcDo_Config, factionKey, revealTimeout, contactReportCooldown);
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -74,9 +74,9 @@ modded class SCR_PlayerController : PlayerController
 
 	//------------------------------------------------------------------------------------------------
 	[RplRpc(RplChannel.Reliable, RplRcver.Owner)]
-	protected void OPC_RpcDo_Config(string factionKey, float revealTimeout)
+	protected void OPC_RpcDo_Config(string factionKey, float revealTimeout, float contactReportCooldown)
 	{
-		OPC_GetFogOfWarClient().OnConfigReceived(factionKey, revealTimeout);
+		OPC_GetFogOfWarClient().OnConfigReceived(factionKey, revealTimeout, contactReportCooldown);
 	}
 
 	//------------------------------------------------------------------------------------------------

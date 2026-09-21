@@ -41,6 +41,21 @@ class OPC_FogOfWarClient
 	//! IEntities whose map item we hid
 	protected ref set<IEntity> m_HiddenMapEntities = new set<IEntity>();
 
+	//! Raises a Game Master notification when AI first spot something, so the commander can jump to it
+	protected ref OPC_ContactReporter m_ContactReporter = new OPC_ContactReporter();
+
+	//! The first revealed list after (re)subscribing carries everything currently in contact. Record it
+	//! as reported rather than raising a report for each, so reopening the editor mid-firefight does not
+	//! dump the whole front line into the notification log at once.
+	protected bool m_bPrimeContactReports;
+
+	//! Scratch, reused by IsRevealed() so a refresh over a few thousand entities doesn't allocate one
+	//! set per group it walks
+	protected ref set<SCR_EditableEntityComponent> m_GroupChildren = new set<SCR_EditableEntityComponent>();
+	//! Scratch, reused by Refresh()
+	protected ref set<SCR_EditableEntityComponent> m_AllEntities = new set<SCR_EditableEntityComponent>();
+	protected ref array<SCR_EditableEntityComponent> m_ChangedEntities = {};
+
 	protected ref ScriptInvoker m_OnEnabledChanged = new ScriptInvoker(); //!< (bool enabled)
 	protected ref ScriptInvoker m_OnConfigChanged = new ScriptInvoker(); //!< ()
 
@@ -145,7 +160,10 @@ class OPC_FogOfWarClient
 
 		m_bEnabled = enable;
 		if (enable)
+		{
 			m_sRequestedFactionKey = factionKey;
+			m_bPrimeContactReports = true;
+		}
 
 		HookEditorEvents();
 		SCR_EditorManagerEntity editorManager = SCR_EditorManagerEntity.GetInstance();
@@ -160,6 +178,9 @@ class OPC_FogOfWarClient
 		{
 			m_RevealedEntities.Clear();
 			m_sRequestedFactionKey = string.Empty;
+			m_sHiddenFactionKey = string.Empty;
+			m_HiddenFaction = null;
+			m_ContactReporter.Reset();
 		}
 
 		UpdateApplied();
@@ -196,9 +217,12 @@ class OPC_FogOfWarClient
 			return;
 		}
 
-		int index = keys.Find(m_sHiddenFactionKey);
+		// Cycle from what we last ASKED for, not from what the server has confirmed. m_sHiddenFactionKey
+		// only updates when OPC_RpcDo_Config comes back, so two clicks inside one RPC round trip would
+		// otherwise both cycle from the same starting point and land on the same faction twice.
+		int index = keys.Find(m_sRequestedFactionKey);
 		if (index == -1)
-			index = keys.Find(m_sRequestedFactionKey);
+			index = keys.Find(m_sHiddenFactionKey);
 
 		index++;
 		if (index >= keys.Count())
@@ -222,8 +246,10 @@ class OPC_FogOfWarClient
 
 	//------------------------------------------------------------------------------------------------
 	//! Called from SCR_PlayerController when the server confirms subscription and sends its config
-	void OnConfigReceived(string hiddenFactionKey, float revealTimeout)
+	void OnConfigReceived(string hiddenFactionKey, float revealTimeout, float contactReportCooldown)
 	{
+		m_ContactReporter.SetCooldown(contactReportCooldown);
+
 		m_sHiddenFactionKey = hiddenFactionKey;
 		m_HiddenFaction = null;
 
@@ -235,7 +261,9 @@ class OPC_FogOfWarClient
 			Print(string.Format("[OPC] Fog of war: hidden faction '%1' not found in faction manager!", hiddenFactionKey), LogLevel.WARNING);
 
 		m_OnConfigChanged.Invoke();
-		Refresh();
+
+		if (m_bApplied)
+			Refresh();
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -245,34 +273,42 @@ class OPC_FogOfWarClient
 		set<IEntity> revealed = new set<IEntity>();
 		foreach (RplId id : revealedIds)
 		{
-			IEntity entity = IEntity.Cast(Replication.FindItem(id));
-			if (!entity)
-			{
-				// Might be an RplComponent id instead of an entity id
-				RplComponent rpl = RplComponent.Cast(Replication.FindItem(id));
-				if (rpl)
-					entity = rpl.GetEntity();
-			}
+			// The RplComponent is the head item of an entity's replication node, so it is what an
+			// entity's RplId resolves to. Keep the direct IEntity cast as a fallback for the entity
+			// classes that do carry a replication layout of their own (SCR_AIGroup, for example).
+			Managed item = Replication.FindItem(id);
+			if (!item)
+				continue;
+
+			IEntity entity;
+			RplComponent rpl = RplComponent.Cast(item);
+			if (rpl)
+				entity = rpl.GetEntity();
+			else
+				entity = IEntity.Cast(item);
 
 			if (entity)
 				revealed.Insert(entity);
 		}
 
-		// Skip the (potentially expensive) refresh when nothing changed
-		bool changed = revealed.Count() != m_RevealedEntities.Count();
-		if (!changed)
+		// Everything that was not revealed a moment ago is a fresh contact
+		set<IEntity> newlyRevealed = new set<IEntity>();
+		foreach (IEntity entity : revealed)
 		{
-			foreach (IEntity entity : revealed)
-			{
-				if (m_RevealedEntities.Find(entity) == -1)
-				{
-					changed = true;
-					break;
-				}
-			}
+			if (m_RevealedEntities.Find(entity) == -1)
+				newlyRevealed.Insert(entity);
 		}
 
+		// Skip the (potentially expensive) refresh when nothing changed
+		bool changed = !newlyRevealed.IsEmpty() || revealed.Count() != m_RevealedEntities.Count();
+
 		m_RevealedEntities = revealed;
+
+		if (m_bEnabled && m_ContactReporter.IsEnabled())
+		{
+			m_ContactReporter.ReportNewContacts(newlyRevealed, m_bPrimeContactReports);
+			m_bPrimeContactReports = false;
+		}
 
 		if (changed && m_bApplied)
 			Refresh();
@@ -331,9 +367,10 @@ class OPC_FogOfWarClient
 		// Group is revealed when any of its members is
 		if (entity.GetEntityType() == EEditableEntityType.GROUP)
 		{
-			set<SCR_EditableEntityComponent> children = new set<SCR_EditableEntityComponent>();
-			entity.GetChildren(children, true);
-			foreach (SCR_EditableEntityComponent child : children)
+			// GetChildren() appends and does not clear, so the scratch set has to be reset first
+			m_GroupChildren.Clear();
+			entity.GetChildren(m_GroupChildren, true);
+			foreach (SCR_EditableEntityComponent child : m_GroupChildren)
 			{
 				IEntity childOwner = child.GetOwner();
 				if (childOwner && m_RevealedEntities.Find(childOwner) != -1)
@@ -362,21 +399,21 @@ class OPC_FogOfWarClient
 		if (!core)
 			return;
 
-		set<SCR_EditableEntityComponent> entities = new set<SCR_EditableEntityComponent>();
-		core.GetAllEntities(entities);
+		m_AllEntities.Clear();
+		core.GetAllEntities(m_AllEntities);
 
-		array<SCR_EditableEntityComponent> changed = {};
-		foreach (SCR_EditableEntityComponent entity : entities)
+		m_ChangedEntities.Clear();
+		foreach (SCR_EditableEntityComponent entity : m_AllEntities)
 		{
 			if (ApplyToEntity(entity))
-				changed.Insert(entity);
+				m_ChangedEntities.Insert(entity);
 		}
 
 		// Entities that were hidden but are no longer registered
 		for (int i = m_HiddenEntities.Count() - 1; i >= 0; i--)
 		{
 			SCR_EditableEntityComponent hidden = m_HiddenEntities[i];
-			if (!hidden || entities.Find(hidden) == -1)
+			if (!hidden || m_AllEntities.Find(hidden) == -1)
 			{
 				if (hidden)
 					Unhide(hidden);
@@ -384,8 +421,18 @@ class OPC_FogOfWarClient
 			}
 		}
 
-		if (!changed.IsEmpty())
-			RevalidateEditorState(changed);
+		if (!m_ChangedEntities.IsEmpty())
+			RevalidateEditorState(m_ChangedEntities);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	//! Queue a refresh, replacing any refresh that is already pending.
+	//! CallLater queues one call per invocation, so without removing the pending one first a squad
+	//! reorganising or a map being reopened stacks up several full refreshes back to back.
+	protected void RefreshDeferred(int delayMs)
+	{
+		GetGame().GetCallqueue().Remove(Refresh);
+		GetGame().GetCallqueue().CallLater(Refresh, delayMs, false);
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -522,18 +569,16 @@ class OPC_FogOfWarClient
 	}
 
 	//------------------------------------------------------------------------------------------------
-	//! Push changes into the editor filter chain (VISIBLE state and everything below it)
+	//! Push changes into the editor filter chain (VISIBLE state and everything below it).
+	//! Validate() only touches the entities that actually changed. The previous version fell back to
+	//! SetFromPredecessor() above 32 changes, which rebuilt the entire VISIBLE filter and cascaded
+	//! through SetInSuccessors() into RENDERED / ACTIVE / SELECTED / HOVER - by far the most expensive
+	//! thing this class did, and it ran on every server update during a busy contact.
 	protected void RevalidateEditorState(array<SCR_EditableEntityComponent> entities)
 	{
 		SCR_BaseEditableEntityFilter visibleFilter = SCR_BaseEditableEntityFilter.GetInstance(EEditableEntityState.VISIBLE);
 		if (!visibleFilter)
 			return;
-
-		if (entities.Count() > 32)
-		{
-			visibleFilter.SetFromPredecessor();
-			return;
-		}
 
 		foreach (SCR_EditableEntityComponent entity : entities)
 		{
@@ -564,6 +609,7 @@ class OPC_FogOfWarClient
 		{
 			HookCoreEvents(false);
 			HookMapEvents(false);
+			GetGame().GetCallqueue().Remove(Refresh);
 			UnhideAll();
 		}
 	}
@@ -571,14 +617,12 @@ class OPC_FogOfWarClient
 	//------------------------------------------------------------------------------------------------
 	protected void UnhideAll()
 	{
-		array<SCR_EditableEntityComponent> changed = {};
 		foreach (SCR_EditableEntityComponent entity : m_HiddenEntities)
 		{
 			if (!entity)
 				continue;
 
 			Unhide(entity);
-			changed.Insert(entity);
 		}
 		m_HiddenEntities.Clear();
 
@@ -601,6 +645,8 @@ class OPC_FogOfWarClient
 		}
 		m_HiddenMapEntities.Clear();
 
+		// One full rebuild is the right tool here: every entity we were suppressing has to come back at
+		// once, and this only runs when fog of war is switched off or the editor closes.
 		SCR_BaseEditableEntityFilter visibleFilter = SCR_BaseEditableEntityFilter.GetInstance(EEditableEntityState.VISIBLE);
 		if (visibleFilter)
 			visibleFilter.SetFromPredecessor();
@@ -630,11 +676,15 @@ class OPC_FogOfWarClient
 		if (!m_bEnabled)
 			return;
 
+		// The server resends the whole list on resubscribe; treat it as already-known contacts
+		m_bPrimeContactReports = true;
+
 		// Re-subscribe (server may have dropped us) and re-apply once the editor components exist
 		SCR_PlayerController pc = SCR_PlayerController.Cast(GetGame().GetPlayerController());
 		if (pc)
 			pc.OPC_RequestSubscribe(true, m_sRequestedFactionKey);
 
+		GetGame().GetCallqueue().Remove(UpdateApplied);
 		GetGame().GetCallqueue().CallLater(UpdateApplied, 100, false);
 	}
 
@@ -642,6 +692,7 @@ class OPC_FogOfWarClient
 	protected void OnEditorClosed()
 	{
 		m_bEditorOpen = false;
+		GetGame().GetCallqueue().Remove(UpdateApplied);
 		UpdateApplied();
 
 		// Pause the server-side polling while the editor is closed; OnEditorOpened resubscribes
@@ -711,7 +762,7 @@ class OPC_FogOfWarClient
 	protected void OnParentEntityChanged(SCR_EditableEntityComponent entity, SCR_EditableEntityComponent parentEntity, SCR_EditableEntityComponent parentEntityPrev)
 	{
 		// Group membership changed -> group reveal state may change
-		GetGame().GetCallqueue().CallLater(Refresh, 100, false);
+		RefreshDeferred(100);
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -735,6 +786,6 @@ class OPC_FogOfWarClient
 	protected void OnMapOpen(MapConfiguration config)
 	{
 		// Give the map a frame or two to create its items
-		GetGame().GetCallqueue().CallLater(Refresh, 200, false);
+		RefreshDeferred(200);
 	}
 }

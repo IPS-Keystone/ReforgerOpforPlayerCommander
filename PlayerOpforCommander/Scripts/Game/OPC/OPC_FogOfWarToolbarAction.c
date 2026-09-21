@@ -7,9 +7,14 @@
 [BaseContainerProps(), SCR_BaseContainerCustomTitleUIInfo("m_Info")]
 class OPC_FogOfWarToolbarAction : SCR_BaseToggleToolbarAction
 {
-	// Placeholder icons (vanilla textures). Replace with your own .edds if you like.
+	// Distinct vanilla textures for the two states, so the button reads at a glance with no imported
+	// assets. The mod also ships a matching pair of custom icons in UI/Textures/OPC - once the addon
+	// has been opened in Workbench it assigns them a {GUID}, and these two lines become:
+	//   static const ResourceName ICON_OFF = "{GUID}UI/Textures/OPC/OPC_FogOfWar_Off.edds";
+	//   static const ResourceName ICON_ON  = "{GUID}UI/Textures/OPC/OPC_FogOfWar_On.edds";
+	// See README, "Custom icon".
 	static const ResourceName ICON_OFF = "{A489F552FB7489C3}UI/Textures/Editor/EditableEntities/Characters/EditableEntity_Character_Custom.edds";
-	static const ResourceName ICON_ON = "{A489F552FB7489C3}UI/Textures/Editor/EditableEntities/Characters/EditableEntity_Character_Custom.edds";
+	static const ResourceName ICON_ON = "{857DD01860810AE9}UI/Textures/Editor/Attributes/Categories/Attribute_Category_Weather.edds";
 
 	//------------------------------------------------------------------------------------------------
 	//! Factory used by the modded toolbar component class
@@ -44,8 +49,11 @@ class OPC_FogOfWarToolbarAction : SCR_BaseToggleToolbarAction
 	}
 
 	//------------------------------------------------------------------------------------------------
-	//! Update label + highlight from the client state. Value = index of the faction (+1) so the
-	//! toolbar refreshes the tooltip when cycling between factions while staying highlighted.
+	//! Update label + highlight from the client state.
+	//! Value = index of the faction (+2) rather than a plain 0/1: SCR_BaseToggleToolbarAction.Toggle()
+	//! early-returns when neither argument changed, and SCR_ActionToolbarItemEditorUIComponent only
+	//! re-reads GetInfoToggled() from that event, so without a changing value the tooltip would keep
+	//! naming the previous faction while cycling.
 	protected void RefreshState()
 	{
 		OPC_FogOfWarClient fow = OPC_FogOfWarClient.GetInstance();

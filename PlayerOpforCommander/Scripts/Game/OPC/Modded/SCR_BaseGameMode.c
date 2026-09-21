@@ -15,6 +15,9 @@ modded class SCR_BaseGameMode : BaseGameMode
 	[Attribute(defvalue: "0", desc: "When enabled, player-controlled characters hostile to the hidden faction also reveal what they perceive.", category: "OPC Fog of War")]
 	protected bool m_bOPC_PlayersCanSpot;
 
+	[Attribute(defvalue: "120", desc: "Seconds before the same contact can raise another report in the commander's notification log. 0 disables contact reports entirely.", category: "OPC Fog of War", params: "0 900 5")]
+	protected float m_fOPC_ContactReportCooldown;
+
 	protected ref OPC_FogOfWarServer m_OPC_FogOfWar;
 
 	//------------------------------------------------------------------------------------------------
@@ -32,8 +35,9 @@ modded class SCR_BaseGameMode : BaseGameMode
 			float timeout = m_fOPC_RevealTimeout;
 			float interval = m_fOPC_UpdateInterval;
 			bool playersCanSpot = m_bOPC_PlayersCanSpot;
+			float contactCooldown = m_fOPC_ContactReportCooldown;
 
-			// Mission header overrides
+			// Mission header overrides - every setting can be overridden per scenario
 			SCR_MissionHeader header = SCR_MissionHeader.Cast(GetGame().GetMissionHeader());
 			if (header)
 			{
@@ -42,9 +46,18 @@ modded class SCR_BaseGameMode : BaseGameMode
 
 				if (header.m_fOPC_RevealTimeout > 0)
 					timeout = header.m_fOPC_RevealTimeout;
+
+				if (header.m_fOPC_UpdateInterval > 0)
+					interval = header.m_fOPC_UpdateInterval;
+
+				if (header.m_iOPC_PlayersCanSpot >= 0)
+					playersCanSpot = header.m_iOPC_PlayersCanSpot > 0;
+
+				if (header.m_fOPC_ContactReportCooldown >= 0)
+					contactCooldown = header.m_fOPC_ContactReportCooldown;
 			}
 
-			m_OPC_FogOfWar.Configure(factionKey, timeout, interval, playersCanSpot);
+			m_OPC_FogOfWar.Configure(factionKey, timeout, interval, playersCanSpot, contactCooldown);
 		}
 
 		return m_OPC_FogOfWar;

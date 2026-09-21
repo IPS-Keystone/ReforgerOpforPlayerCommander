@@ -6,17 +6,29 @@
 [BaseContainerProps(), SCR_BaseContainerCustomTitleEnum(EEditableEntityState, "m_State")]
 modded class SCR_VisibleEditableEntityFilter : SCR_BaseEditableEntityFilter
 {
+	//! CanAdd() runs once per entity per validation, which during a filter rebuild means once for every
+	//! editable entity in the mission. Resolving the player controller each time was pure overhead, so
+	//! the client is cached - but only for the lifetime of one editor session, because the client is
+	//! owned by SCR_PlayerController while this filter lives on the (config-owned) entities manager.
+	protected OPC_FogOfWarClient m_OPC_FogOfWar;
+
 	//------------------------------------------------------------------------------------------------
 	override bool CanAdd(SCR_EditableEntityComponent entity)
 	{
 		if (!super.CanAdd(entity))
 			return false;
 
-		OPC_FogOfWarClient fow = OPC_FogOfWarClient.GetInstance(false);
-		if (fow && fow.IsHidden(entity))
-			return false;
+		if (!m_OPC_FogOfWar)
+			m_OPC_FogOfWar = OPC_FogOfWarClient.GetInstance(false);
 
-		return true;
+		return !m_OPC_FogOfWar || !m_OPC_FogOfWar.IsHidden(entity);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	override void EOnEditorDeactivate()
+	{
+		m_OPC_FogOfWar = null;
+		super.EOnEditorDeactivate();
 	}
 }
 
@@ -26,16 +38,24 @@ modded class SCR_VisibleEditableEntityFilter : SCR_BaseEditableEntityFilter
 [BaseContainerProps(), SCR_BaseContainerCustomTitleEnum(EEditableEntityState, "m_State")]
 modded class SCR_HoverEditableEntityFilter : SCR_BaseEditableEntityFilter
 {
+	protected OPC_FogOfWarClient m_OPC_FogOfWar;
+
 	//------------------------------------------------------------------------------------------------
 	override bool CanAdd(SCR_EditableEntityComponent entity)
 	{
 		if (!super.CanAdd(entity))
 			return false;
 
-		OPC_FogOfWarClient fow = OPC_FogOfWarClient.GetInstance(false);
-		if (fow && fow.IsHidden(entity))
-			return false;
+		if (!m_OPC_FogOfWar)
+			m_OPC_FogOfWar = OPC_FogOfWarClient.GetInstance(false);
 
-		return true;
+		return !m_OPC_FogOfWar || !m_OPC_FogOfWar.IsHidden(entity);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	override protected void EOnEditorDeactivate()
+	{
+		m_OPC_FogOfWar = null;
+		super.EOnEditorDeactivate();
 	}
 }
