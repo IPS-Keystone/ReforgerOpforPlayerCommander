@@ -51,10 +51,18 @@ class OPC_FogOfWarServer
 
 	protected bool m_bPolling;
 
-	//! Vanilla perception code only ever queries DETECTED and ENEMY (see SCR_AIGroupPerception).
-	//! ETargetCategory.UNKNOWN is the enum's zero value rather than a queryable bucket, so asking for it
-	//! cost a third of the perception queries for nothing.
-	protected static const ref array<ETargetCategory> TARGET_CATEGORIES = {ETargetCategory.DETECTED, ETargetCategory.ENEMY};
+	//! Every bucket a hostile contact can sit in. UNKNOWN is where a target lands before the AI has
+	//! classified it, so it is queried too - a contact that is only ever heard may never leave it.
+	protected static const ref array<ETargetCategory> TARGET_CATEGORIES = {ETargetCategory.UNKNOWN, ETargetCategory.DETECTED, ETargetCategory.ENEMY};
+
+	//! How often a one-line diagnostic summary is pushed to each subscribed commander's script log
+	protected static const float DIAG_INTERVAL = 30;
+	protected float m_fNextDiagTime;
+
+	//--- Diagnostic counters for the last poll
+	protected int m_iDiagAgents;
+	protected int m_iDiagSpotters;
+	protected int m_iDiagTargets;
 
 	//--- Scratch, reused between polls so the 1 Hz loop does not allocate
 	protected ref array<AIAgent> m_aAgents = {};
@@ -139,6 +147,8 @@ class OPC_FogOfWarServer
 			return;
 		}
 
+		string requestedKey = factionKey;
+
 		// Validate requested key (must be a known faction), otherwise use server default
 		FactionManager factionManager = GetGame().GetFactionManager();
 		Faction hiddenFaction;
@@ -174,6 +184,21 @@ class OPC_FogOfWarServer
 
 		// Send an immediate update so the commander doesn't wait a full interval
 		Poll();
+
+		SendDiag(playerId, string.Format("subscribed: requested '%1' -> hiding '%2' (faction %3), timeout %4s, interval %5s, playersCanSpot %6", requestedKey, factionKey, hiddenFaction != null, m_fRevealTimeout, m_fUpdateInterval, m_bPlayersCanSpot));
+		m_fNextDiagTime = 0;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	//! Push a diagnostic line to one commander's script log (and to the server's own). This is how a
+	//! dedicated-server test gets diagnosed from the client log alone.
+	protected void SendDiag(int playerId, string line)
+	{
+		Print("[OPC][server] " + line, LogLevel.NORMAL);
+
+		SCR_PlayerController pc = GetPlayerController(playerId);
+		if (pc)
+			pc.OPC_SendDiag(line);
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -272,6 +297,23 @@ class OPC_FogOfWarServer
 			pc.OPC_SendRevealed(sightings.m_aRevealedIds);
 			m_mSentRevision.Set(playerId, sightings.m_iRevision);
 		}
+
+		if (now >= m_fNextDiagTime)
+		{
+			m_fNextDiagTime = now + DIAG_INTERVAL;
+			foreach (int playerId, string subscribedKey : m_mSubscribers)
+			{
+				OPC_FogOfWarSightings sightings;
+				if (!m_mSightings.Find(subscribedKey, sightings))
+				{
+					SendDiag(playerId, string.Format("poll: no sightings set for '%1'", subscribedKey));
+					continue;
+				}
+
+				SendDiag(playerId, string.Format("poll: hiding '%1' (faction %2) | agents %3, hostile AI spotters %4, contacts seen %5 | tracked %6, revealed %7, rev %8",
+					subscribedKey, sightings.m_HiddenFaction != null, m_iDiagAgents, m_iDiagSpotters, m_iDiagTargets, sightings.m_mLastSeen.Count(), sightings.m_aRevealedIds.Count(), sightings.m_iRevision));
+			}
+		}
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -303,6 +345,10 @@ class OPC_FogOfWarServer
 
 		m_aAgents.Clear();
 		aiWorld.GetAIAgents(m_aAgents);
+
+		m_iDiagAgents = m_aAgents.Count();
+		m_iDiagSpotters = 0;
+		m_iDiagTargets = 0;
 
 		foreach (AIAgent agent : m_aAgents)
 		{
@@ -359,6 +405,8 @@ class OPC_FogOfWarServer
 			if (!perception)
 				continue;
 
+			m_iDiagSpotters++;
+
 			foreach (ETargetCategory category : TARGET_CATEGORIES)
 			{
 				m_aTargets.Clear();
@@ -373,23 +421,36 @@ class OPC_FogOfWarServer
 					if (!targetEntity)
 						continue;
 
-					float since = Math.Min(target.GetTimeSinceSeen(), target.GetTimeSinceDetected());
-					if (since < 0 || since > m_fRevealTimeout)
+					// The most recent of "seen" and "detected". A negative value from either means the
+					// engine has no such timestamp, not that the contact is stale - the target is in the
+					// AI's list right now, so fall back to the other one, or to "just now".
+					float sinceSeen = target.GetTimeSinceSeen();
+					float sinceDetected = target.GetTimeSinceDetected();
+					float since = -1;
+					if (sinceSeen >= 0)
+						since = sinceSeen;
+					if (sinceDetected >= 0 && (since < 0 || sinceDetected < since))
+						since = sinceDetected;
+					if (since < 0)
+						since = 0;
+
+					if (since > m_fRevealTimeout)
 						continue;
 
+					m_iDiagTargets++;
 					float seenAt = now - since;
-					Faction targetFaction = target.GetPerceivedFaction();
 
 					// Resolve the contact and everything its detection drags with it once per target,
 					// rather than once per subscribed faction
 					CollectSpotted(target, targetEntity);
 
+					// No faction filter on the contact here, on purpose. The AI's "perceived" faction of a
+					// target can differ from its real one (disguise / perceived-faction systems), and
+					// revealing an entity the commander was never hiding is a harmless no-op on the client,
+					// which already restricts hiding to the hidden faction. Filtering here could only ever
+					// lose contacts.
 					foreach (OPC_FogOfWarSightings sightings : m_aRelevantSightings)
 					{
-						// Only the hidden faction (and its allies) matters
-						if (targetFaction && targetFaction != sightings.m_HiddenFaction && !sightings.m_HiddenFaction.IsFactionFriendly(targetFaction))
-							continue;
-
 						foreach (IEntity spotted : m_aSpotted)
 						{
 							RegisterSighting(sightings, spotted, seenAt);

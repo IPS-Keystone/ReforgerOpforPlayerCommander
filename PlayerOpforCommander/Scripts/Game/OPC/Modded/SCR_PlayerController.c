@@ -73,6 +73,24 @@ modded class SCR_PlayerController : PlayerController
 	}
 
 	//------------------------------------------------------------------------------------------------
+	//! Server: push a one-line diagnostic to the owning client's script log, so a dedicated-server
+	//! test can be diagnosed from the commander's own log without access to the server's.
+	void OPC_SendDiag(string line)
+	{
+		if (OPC_IsLocalOwner())
+			OPC_RpcDo_Diag(line);
+		else
+			Rpc(OPC_RpcDo_Diag, line);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	[RplRpc(RplChannel.Reliable, RplRcver.Owner)]
+	protected void OPC_RpcDo_Diag(string line)
+	{
+		Print("[OPC][server] " + line, LogLevel.NORMAL);
+	}
+
+	//------------------------------------------------------------------------------------------------
 	[RplRpc(RplChannel.Reliable, RplRcver.Owner)]
 	protected void OPC_RpcDo_Config(string factionKey, float revealTimeout, float contactReportCooldown)
 	{

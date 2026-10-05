@@ -55,6 +55,7 @@ class OPC_FogOfWarClient
 	//! Scratch, reused by Refresh()
 	protected ref set<SCR_EditableEntityComponent> m_AllEntities = new set<SCR_EditableEntityComponent>();
 	protected ref array<SCR_EditableEntityComponent> m_ChangedEntities = {};
+	protected int m_iLastLoggedHidden = -1;
 
 	protected ref ScriptInvoker m_OnEnabledChanged = new ScriptInvoker(); //!< (bool enabled)
 	protected ref ScriptInvoker m_OnConfigChanged = new ScriptInvoker(); //!< ()
@@ -169,6 +170,11 @@ class OPC_FogOfWarClient
 		SCR_EditorManagerEntity editorManager = SCR_EditorManagerEntity.GetInstance();
 		m_bEditorOpen = editorManager && editorManager.IsOpened();
 
+		if (enable)
+			Print(string.Format("[OPC] Fog of war ON, requesting to hide '%1' (editor open: %2, server: %3)", m_sRequestedFactionKey, m_bEditorOpen, Replication.IsServer()), LogLevel.NORMAL);
+		else
+			Print("[OPC] Fog of war OFF", LogLevel.NORMAL);
+
 		// Ask server to start/stop streaming spotted entities
 		SCR_PlayerController pc = SCR_PlayerController.Cast(GetGame().GetPlayerController());
 		if (pc)
@@ -232,16 +238,49 @@ class OPC_FogOfWarClient
 	}
 
 	//------------------------------------------------------------------------------------------------
-	//! First playable faction (the human players' side), otherwise server default
+	//! The playable faction with the most human players in it - that is the side the commander is
+	//! fighting, so it is the side to hide first. Faction-manager order is only the tie-breaker: on a
+	//! mission where OPFOR happens to be listed first, starting from keys[0] would hide the
+	//! commander's own AI, and nothing could ever reveal them.
 	protected string GetPreferredFactionKey()
 	{
 		array<string> keys = {};
-		GetPlayableFactionKeys(keys);
+		if (GetPlayableFactionKeys(keys) == 0)
+			return string.Empty;
 
-		if (!keys.IsEmpty())
-			return keys[0];
+		map<string, int> playersPerFaction = new map<string, int>();
+		PlayerManager playerManager = GetGame().GetPlayerManager();
+		if (playerManager)
+		{
+			array<int> playerIds = {};
+			playerManager.GetPlayers(playerIds);
+			foreach (int playerId : playerIds)
+			{
+				Faction faction = SCR_FactionManager.SGetPlayerFaction(playerId);
+				if (!faction)
+					continue;
 
-		return string.Empty;
+				string key = faction.GetFactionKey();
+				int count;
+				playersPerFaction.Find(key, count);
+				playersPerFaction.Set(key, count + 1);
+			}
+		}
+
+		string best = keys[0];
+		int bestCount = -1;
+		foreach (string key : keys)
+		{
+			int count;
+			playersPerFaction.Find(key, count);
+			if (count > bestCount)
+			{
+				best = key;
+				bestCount = count;
+			}
+		}
+
+		return best;
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -259,6 +298,8 @@ class OPC_FogOfWarClient
 
 		if (!m_HiddenFaction)
 			Print(string.Format("[OPC] Fog of war: hidden faction '%1' not found in faction manager!", hiddenFactionKey), LogLevel.WARNING);
+
+		Print(string.Format("[OPC] Config from server: hiding '%1' (resolved: %2), reveal timeout %3s, contact cooldown %4s, applied: %5", hiddenFactionKey, m_HiddenFaction != null, revealTimeout, contactReportCooldown, m_bApplied), LogLevel.NORMAL);
 
 		m_OnConfigChanged.Invoke();
 
@@ -301,6 +342,9 @@ class OPC_FogOfWarClient
 
 		// Skip the (potentially expensive) refresh when nothing changed
 		bool changed = !newlyRevealed.IsEmpty() || revealed.Count() != m_RevealedEntities.Count();
+
+		if (changed)
+			Print(string.Format("[OPC] Revealed list: %1 ids from server, %2 resolved to entities, %3 new (applied: %4)", revealedIds.Count(), revealed.Count(), newlyRevealed.Count(), m_bApplied), LogLevel.NORMAL);
 
 		m_RevealedEntities = revealed;
 
@@ -423,6 +467,12 @@ class OPC_FogOfWarClient
 
 		if (!m_ChangedEntities.IsEmpty())
 			RevalidateEditorState(m_ChangedEntities);
+
+		if (m_HiddenEntities.Count() != m_iLastLoggedHidden)
+		{
+			m_iLastLoggedHidden = m_HiddenEntities.Count();
+			Print(string.Format("[OPC] Refresh: %1 editable entities, %2 hidden, %3 revealed, %4 changed this pass", m_AllEntities.Count(), m_HiddenEntities.Count(), m_RevealedEntities.Count(), m_ChangedEntities.Count()), LogLevel.NORMAL);
+		}
 	}
 
 	//------------------------------------------------------------------------------------------------
