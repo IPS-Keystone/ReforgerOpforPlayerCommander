@@ -50,6 +50,19 @@ minute old contact puts the camera over the spot it was reported from — which 
 the time you get there. That is the point; a report that tracked the unit would be a live feed of
 something that has since gone back into the fog.
 
+### With IPSK AI Overhaul
+
+IPSK AI Overhaul depends on this mod and asks it, per Game Master, what to send. While a
+commander's fog of war is on:
+
+- IPSK's own "**<group> reports contact**" is not sent to them when contact reports are enabled,
+  so one sighting is one entry in the log, not two.
+- No IPSK notification ("lost its leader", "breaking contact", "QRF called", "firing a mission")
+  is sent to them about a group that fog of war is hiding from them.
+
+Other Game Masters still get every IPSK notification. Other mods can ask the same questions through
+`OPC_FogOfWarServer.Find()` → `IsCommander`, `GetsContactReports`, `IsHiddenFrom` (server only).
+
 Reports are raised locally on the commander's machine and only while fog of war is on. Reopening the
 editor mid-firefight does not dump the whole front line into the log — everything already in contact
 at that moment is treated as known.

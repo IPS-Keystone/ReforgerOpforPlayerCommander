@@ -365,28 +365,44 @@ class OPC_FogOfWarClient
 		if (!entity)
 			return false;
 
+		if (!m_HiddenFaction)
+		{
+			// Config not received yet - fall back to key comparison if we have one
+			if (m_sHiddenFactionKey.IsEmpty() || !IsHideableType(entity))
+				return false;
+
+			Faction faction = entity.GetFaction();
+			return faction && faction.GetFactionKey() == m_sHiddenFactionKey;
+		}
+
+		return IsHiddenSideEntity(entity, m_HiddenFaction);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	//! Characters, vehicles, groups and player delegates are hidden; everything else never is.
+	protected static bool IsHideableType(notnull SCR_EditableEntityComponent entity)
+	{
 		EEditableEntityType type = entity.GetEntityType();
-		if (type != EEditableEntityType.CHARACTER && type != EEditableEntityType.VEHICLE && type != EEditableEntityType.GROUP && entity.GetPlayerID() <= 0)
+		return type == EEditableEntityType.CHARACTER || type == EEditableEntityType.VEHICLE || type == EEditableEntityType.GROUP || entity.GetPlayerID() > 0;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	//! Does this entity belong to the hidden faction's side (the faction itself or its allies)?
+	//! Static so the server answers the same question with the same rule (OPC_FogOfWarServer.IsHiddenFrom).
+	static bool IsHiddenSideEntity(SCR_EditableEntityComponent entity, Faction hiddenFaction)
+	{
+		if (!entity || !hiddenFaction || !IsHideableType(entity))
 			return false;
 
 		Faction faction = entity.GetFaction();
 		if (!faction)
 			return false;
 
-		if (!m_HiddenFaction)
-		{
-			// Config not received yet - fall back to key comparison if we have one
-			if (m_sHiddenFactionKey.IsEmpty())
-				return false;
-
-			return faction.GetFactionKey() == m_sHiddenFactionKey;
-		}
-
-		if (faction == m_HiddenFaction)
+		if (faction == hiddenFaction)
 			return true;
 
 		// Allies of the hidden faction are hidden as well
-		return m_HiddenFaction.IsFactionFriendly(faction) && !faction.IsFactionEnemy(m_HiddenFaction);
+		return hiddenFaction.IsFactionFriendly(faction) && !faction.IsFactionEnemy(hiddenFaction);
 	}
 
 	//------------------------------------------------------------------------------------------------

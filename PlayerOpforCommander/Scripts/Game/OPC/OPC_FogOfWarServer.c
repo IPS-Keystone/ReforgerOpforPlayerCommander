@@ -133,6 +133,105 @@ class OPC_FogOfWarServer
 	}
 
 	//------------------------------------------------------------------------------------------------
+	// Queries for other mods
+	//
+	// A commander is only subscribed while fog of war is on AND their editor is open (the client
+	// unsubscribes when the editor closes), which is exactly when hiding is in effect on their screen.
+	// Server only, like the rest of this class.
+	//------------------------------------------------------------------------------------------------
+	//! The fog of war server of the current game, or null when no commander has ever subscribed.
+	static OPC_FogOfWarServer Find()
+	{
+		SCR_BaseGameMode gameMode = SCR_BaseGameMode.Cast(GetGame().GetGameMode());
+		if (!gameMode)
+			return null;
+
+		return gameMode.OPC_FindFogOfWar();
+	}
+
+	//------------------------------------------------------------------------------------------------
+	bool HasCommanders()
+	{
+		return !m_mSubscribers.IsEmpty();
+	}
+
+	//------------------------------------------------------------------------------------------------
+	//! True when this player currently has fog of war in effect.
+	bool IsCommander(int playerId)
+	{
+		return m_mSubscribers.Contains(playerId);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	//! True when this commander gets contact reports from this mod (fog of war on, reports enabled).
+	bool GetsContactReports(int playerId)
+	{
+		return m_fContactReportCooldown > 0 && IsCommander(playerId);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	//! Would this entity be hidden on this commander's screen right now? Mirrors
+	//! OPC_FogOfWarClient.IsHidden(), from the server's own sightings rather than the copy last sent
+	//! to the client. Always false for a player who is not a commander.
+	bool IsHiddenFrom(int playerId, SCR_EditableEntityComponent entity)
+	{
+		if (!entity)
+			return false;
+
+		string factionKey;
+		if (!m_mSubscribers.Find(playerId, factionKey))
+			return false;
+
+		OPC_FogOfWarSightings sightings;
+		if (!m_mSightings.Find(factionKey, sightings) || !sightings.m_HiddenFaction)
+			return false;
+
+		if (!OPC_FogOfWarClient.IsHiddenSideEntity(entity, sightings.m_HiddenFaction))
+			return false;
+
+		return !IsSpotted(sightings, entity);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	//! Same rules as OPC_FogOfWarClient.IsRevealed(): the entity itself, a player's controlled
+	//! entity, or for a group any of its members.
+	protected bool IsSpotted(notnull OPC_FogOfWarSightings sightings, notnull SCR_EditableEntityComponent entity)
+	{
+		if (IsSpottedEntity(sightings, entity.GetOwner()))
+			return true;
+
+		if (entity.GetPlayerID() > 0)
+		{
+			PlayerManager playerManager = GetGame().GetPlayerManager();
+			if (playerManager && IsSpottedEntity(sightings, playerManager.GetPlayerControlledEntity(entity.GetPlayerID())))
+				return true;
+		}
+
+		if (entity.GetEntityType() == EEditableEntityType.GROUP)
+		{
+			set<SCR_EditableEntityComponent> children = new set<SCR_EditableEntityComponent>();
+			entity.GetChildren(children, true);
+			foreach (SCR_EditableEntityComponent child : children)
+			{
+				if (child && IsSpottedEntity(sightings, child.GetOwner()))
+					return true;
+			}
+		}
+
+		return false;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected bool IsSpottedEntity(notnull OPC_FogOfWarSightings sightings, IEntity entity)
+	{
+		if (!entity)
+			return false;
+
+		RplId id = GetEntityRplId(entity);
+		return id.IsValid() && sightings.m_mLastSeen.Contains(id);
+	}
+
+	//------------------------------------------------------------------------------------------------
 	//! Subscribe / unsubscribe a commander. factionKey = the faction to HIDE (empty = server default).
 	void SetSubscribed(int playerId, bool subscribe, string factionKey = string.Empty)
 	{
