@@ -64,6 +64,14 @@ modded class SCR_BaseGameMode : BaseGameMode
 	}
 
 	//------------------------------------------------------------------------------------------------
+	//! Server only. Like OPC_GetFogOfWar() but never creates it: null means no commander has ever
+	//! subscribed, so nothing is hidden from anyone. For other mods asking about commanders.
+	OPC_FogOfWarServer OPC_FindFogOfWar()
+	{
+		return m_OPC_FogOfWar;
+	}
+
+	//------------------------------------------------------------------------------------------------
 	override protected void OnPlayerDisconnected(int playerId, KickCauseCode cause, int timeout)
 	{
 		super.OnPlayerDisconnected(playerId, cause, timeout);
